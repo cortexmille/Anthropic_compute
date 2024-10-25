@@ -1,0 +1,170 @@
+# Installation Guide for Claude Computer Use Demo on Debian 12
+
+pierre.aumont@gmail.com, beercan.fr, 2024 10 22
+
+## 1. Docker Installation
+
+```bash
+# System update
+sudo apt update
+sudo apt upgrade -y
+
+# Install required dependencies
+sudo apt install -y \
+    apt-transport-https \
+    ca-certificates \
+    curl \
+    gnupg \
+    lsb-release
+
+# Add Docker's official GPG key
+curl -fsSL https://download.docker.com/linux/debian/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+# Add Docker stable repository
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Update repositories and install Docker
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io
+
+# Start and enable Docker service
+sudo systemctl start docker
+sudo systemctl enable docker
+
+# Add user to docker group to avoid using sudo
+sudo usermod -aG docker $USER
+
+# Restart your session for group changes to take effect
+# You can either log out/log in, or use the command:
+newgrp docker
+```
+
+## 2. Docker Network Configuration to Prevent Internet Issues
+
+```bash
+# Create Docker configuration file
+sudo mkdir -p /etc/docker
+sudo nano /etc/docker/daemon.json
+```
+
+Add this content to daemon.json:
+```json
+{
+    "dns": ["89.2.0.1", "89.2.0.2"],
+    "iptables": false,
+    "ip-masq": false
+}
+```
+
+```bash
+# Restart Docker service to apply changes
+sudo systemctl restart docker
+```
+
+## 3. Anthropic API Key Configuration
+
+```bash
+# Create .anthropic directory
+mkdir -p $HOME/.anthropic
+
+# Create configuration file with API key
+nano $HOME/.anthropic/config.json
+```
+
+Add this content to config.json (replace YOUR_API_KEY with your actual API key):
+```json
+{
+    "api_key": "YOUR_API_KEY"
+}
+```
+
+```bash
+# Secure the configuration file
+chmod 600 $HOME/.anthropic/config.json
+```
+
+## 4. First Application Launch
+
+```bash
+# Read API key from configuration file
+export ANTHROPIC_API_KEY=$(jq -r .api_key $HOME/.anthropic/config.json)
+
+# Create dedicated Docker network
+docker network create --driver bridge \
+    --subnet 172.20.0.0/16 \
+    --gateway 172.20.0.1 \
+    --opt "com.docker.network.bridge.enable_ip_masquerade=false" \
+    anthropic-network
+
+# Launch container
+docker run \
+    -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+    -v $HOME/.anthropic:/home/computeruse/.anthropic \
+    --network anthropic-network \
+    -p 5900:5900 \
+    -p 8501:8501 \
+    -p 6080:6080 \
+    -p 8080:8080 \
+    -it ghcr.io/anthropics/anthropic-quickstarts:computer-use-demo-latest
+```
+
+## 5. Subsequent Launches
+
+Create a launch script for convenience:
+
+```bash
+# Create launch script
+nano $HOME/launch-claude.sh
+```
+
+Add this content to launch-claude.sh:
+```bash
+#!/bin/bash
+
+# Read API key
+export ANTHROPIC_API_KEY=$(jq -r .api_key $HOME/.anthropic/config.json)
+
+# Launch container
+docker run \
+    -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
+    -v $HOME/.anthropic:/home/computeruse/.anthropic \
+    --network anthropic-network \
+    -p 5900:5900 \
+    -p 8501:8501 \
+    -p 6080:6080 \
+    -p 8080:8080 \
+    -it ghcr.io/anthropics/anthropic-quickstarts:computer-use-demo-latest
+```
+
+```bash
+# Make the script executable
+chmod +x $HOME/launch-claude.sh
+```
+
+For subsequent launches, simply run:
+```bash
+~/launch-claude.sh
+```
+
+## 6. Accessing the Interface
+
+Once the container is running, you can access the application via:
+- Main interface: http://localhost:8080
+- Streamlit interface only: http://localhost:8501
+- Desktop view only: http://localhost:6080/vnc.html
+- Direct VNC connection: vnc://localhost:5900
+
+## Important Notes
+
+- If you change your API key, simply modify the `$HOME/.anthropic/config.json` file
+- To properly stop the container, use Ctrl+C in the terminal where it's running
+- If you experience network issues, verify that the `anthropic-network` exists with `docker network ls`
+- If you have issues with the Docker network, you can recreate it with:
+  ```bash
+  docker network rm anthropic-network
+  docker network create --driver bridge \
+      --subnet 172.20.0.0/16 \
+      --gateway 172.20.0.1 \
+      --opt "com.docker.network.bridge.enable_ip_masquerade=false" \
+      anthropic-network
+  ```
